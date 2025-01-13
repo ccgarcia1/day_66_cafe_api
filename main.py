@@ -20,9 +20,12 @@ This will install the packages from requirements.txt for this project.
 
 app = Flask(__name__)
 
+
 # CREATE DB
 class Base(DeclarativeBase):
     pass
+
+
 # Connect to Database
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///cafes.db'
 db = SQLAlchemy(model_class=Base)
@@ -57,10 +60,9 @@ class Cafe(db.Model):
         # Method 2. Altenatively use Dictionary Comprehension to do the same thing.
         return {column.name: getattr(self, column.name) for column in self.__table__.columns}
 
+
 with app.app_context():
     db.create_all()
-
-
 
 
 @app.route("/")
@@ -86,16 +88,18 @@ def get_random_cafe_v1():
         "has_sockets": random_cafe.has_sockets,
         "can_take_calls": random_cafe.can_take_calls,
         "coffee_price": random_cafe.coffee_price,
-        "qualquer_outra_coisa":"Qualquer_outro_valor",
+        "qualquer_outra_coisa": "Qualquer_outro_valor",
     })
+
 
 @app.route("/randomv2")
 def get_random_cafe():
     result = db.session.execute(db.select(Cafe))
     all_cafes = result.scalars().all()
     random_cafe = random.choice(all_cafes)
-    #Simply convert the random_cafe data record to a dictionary of key-value pairs.
+    # Simply convert the random_cafe data record to a dictionary of key-value pairs.
     return jsonify(random_cafe.to_dict())
+
 
 # HTTP GET - GET ALL CAFES
 @app.route("/all")
@@ -104,26 +108,107 @@ def get_all_cafes():
     print(result)
     all_cafes = result.scalars().all()
     cafes_list = [cafe.to_dict() for cafe in all_cafes]
-    #Simply convert the random_cafe data record to a dictionary of key-value pairs.
+    # Simply convert the random_cafe data record to a dictionary of key-value pairs.
     return jsonify(cafes_garcia=cafes_list)
+
 
 # HTTP GET with WHERE clause
 @app.route("/search")
 def get_cafe_at_location():
     query_location = request.args.get("loc")
-    result = db.session.execute(db.select(Cafe).where(func.lower(Cafe.location).like(func.lower(f"%{query_location}%"))))
+    result = db.session.execute(
+        db.select(Cafe).where(func.lower(Cafe.location).like(func.lower(f"%{query_location}%"))))
     all_cafes = result.scalars().all()
     if all_cafes:
-      return jsonify(cafes=[cafe.to_dict() for cafe in all_cafes])
+        return jsonify(cafes=[cafe.to_dict() for cafe in all_cafes])
     else:
-        return jsonify(error={"Not found":"Sorry we don't have a cafe at that location"}),404
-# HTTP POST - Create Record
+        return jsonify(error={"Not found": "Sorry we don't have a cafe at that location"}), 404
 
+# HTTP POST - Create Record
+from sqlalchemy.exc import SQLAlchemyError
+import logging
+
+
+@app.route("/add", methods=['POST'])
+def add_new_cafe():
+    try:
+        new_cafe = Cafe(
+            name=request.form.get("name"),
+            map_url=request.form.get("map_url"),
+            img_url=request.form.get("img_url"),
+            location=request.form.get("location"),
+            has_sockets=bool(request.form.get("has_sockets")),
+            has_toilet=bool(request.form.get("has_toilet")),
+            has_wifi=bool(request.form.get("has_wifi")),
+            can_take_calls=bool(request.form.get("can_take_calls")),
+            seats=request.form.get("seats"),
+            coffee_price=request.form.get("coffee_price"),
+        )
+        db.session.add(new_cafe)
+        db.session.commit()
+        return jsonify(response={"success": "Successfully added the new cafe."})
+
+    except SQLAlchemyError as e:
+        # Log the error for debugging purposes
+        logging.error(f"Database error occurred: {e}")
+        db.session.rollback()  # Rollback the transaction if an error occurs
+        return jsonify(response={"error": f"A database error occurred. Please try again. {e}"})
+
+    except Exception as e:
+        # Log other errors
+        logging.error(f"An unexpected error occurred: {e}")
+        return jsonify(response={"error": "An unexpected error occurred."})
 
 # HTTP PUT/PATCH - Update Record
+@app.route("/update-price/<int:cafe_id>", methods=["PATCH"])
+def patch_new_price(cafe_id):
+    try:
+        print(cafe_id)
+        new_price = request.args.get("new_price")
+        cafe = db.get_or_404(Cafe, cafe_id)
+        if cafe:
+            cafe.coffee_price = new_price
+            db.session.commit()
+            return jsonify(response={"success": f"Successfully update the price to {new_price}"}),200
+
+        else:
+            return jsonify(error={"Not found": "Sorry try again later"}), 404
+
+    except SQLAlchemyError as e:
+        # Log the error for debugging purposes
+        db.session.rollback()  # Rollback the transaction if an error occurs
+        return jsonify(response={"error": f"A database error occurred. Please try again. {e}"}), 404
+
+    except Exception as e:
+        # Log other errors
+        return jsonify(response={"error": f"An unexpected error occurred.{e}"}), 404
 
 # HTTP DELETE - Delete Record
+@app.route("/report-closed/<int:cafe_id>", methods=["DELETE"])
+def delete_cafe(cafe_id):
+    try:
+        api_key = request.args.get("api-key")
+        if api_key == "TopSecretAPIKey":
+            cafe = db.get_or_404(Cafe, cafe_id)
+            if cafe:
+                db.session.delete(cafe)
+                db.session.commit()
+                return jsonify(response={"Success": f"Deleted from DB"}),200
 
+            else:
+                return jsonify(error={"Not Found": "Sorry a cafe with that id was not found in the database."}), 404
+
+        else:
+            return jsonify(error={"Forbidden": "Sorry, that's not allowed. Make sure you have the correct api_key."}), 403
+
+    except SQLAlchemyError as e:
+        # Log the error for debugging purposes
+        db.session.rollback()  # Rollback the transaction if an error occurs
+        return jsonify(response={"error": f"A database error occurred. Please try again. {e}"}), 404
+
+    except Exception as e:
+        # Log other errors
+        return jsonify(response={"error": f"An unexpected error occurred.{e}"}), 404
 
 if __name__ == '__main__':
     app.run(debug=True)
